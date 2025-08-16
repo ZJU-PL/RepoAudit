@@ -119,6 +119,7 @@ def summarize_directory(directory: str, llm_client: LLM, module_name=None) -> di
 
     return folder_summary
 
+
 if __name__ == "__main__":
     if len(sys.argv) < 2:
         print("Usage: python semantic_summary.py /path/to/repo/")

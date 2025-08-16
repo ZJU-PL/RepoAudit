@@ -15,7 +15,7 @@ from functools import partial
 import threading
 
 import json
- # FIXME: an isue when installing botocore and boto3. I comment this function temporarily.
+ # FIXME: an issue when installing botocore and boto3. I comment this function temporarily.
 #from botocore.config import Config
 #from botocore.exceptions import BotoCoreError, ClientError
 # import boto3

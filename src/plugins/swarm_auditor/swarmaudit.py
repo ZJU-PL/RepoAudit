@@ -10,7 +10,7 @@ import argparse
 from pathlib import Path
 
 # Add src directory to Python path
-BASE_PATH = Path(__file__).resolve().parent.parent  # Go up one level from src/ to repo root
+BASE_PATH = Path(__file__).resolve().parent.parent.parent  # Go up one level from src/ to repo root
 sys.path.insert(0, str(BASE_PATH / "src"))
 
 import json

@@ -33,3 +33,7 @@ The following components are new in RepoAudit++
 - Language: Rust, JavaScript/TypeScript
 - Bug Types
 
+
+## Third-Party
+
+https://github.com/anthropics/claude-code-security-review
