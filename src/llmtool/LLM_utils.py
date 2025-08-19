@@ -3,7 +3,6 @@ from openai import *
 from pathlib import Path
 from typing import Tuple
 import google.generativeai as genai
-from zhipuai import ZhipuAI
 import anthropic
 import signal
 import sys
@@ -15,10 +14,9 @@ from functools import partial
 import threading
 
 import json
- # FIXME: an issue when installing botocore and boto3. I comment this function temporarily.
-#from botocore.config import Config
-#from botocore.exceptions import BotoCoreError, ClientError
-# import boto3
+from botocore.config import Config
+from botocore.exceptions import BotoCoreError, ClientError
+import boto3
 from ui.logger import Logger
 
 
@@ -27,9 +25,8 @@ class LLM:
     An online inference model using different LLMs:
     - Gemini
     - OpenAI: GPT-3.5, GPT-4, o3-mini
-    - DeepSeek: V3, R1 (uses OpenAI-compatible API)
-    - Claude: 3.5 and 3.7 (via API key or AWS Bedrock)
-    - GLM: Zhipu AI models
+    - DeepSeek: V3, R1
+    - Claude: 3.5 and 3.7
     """
 
     def __init__(
@@ -66,8 +63,6 @@ class LLM:
             # output = self.infer_with_claude_aws_bedrock(message)
         elif "deepseek" in self.online_model_name:
             output = self.infer_with_deepseek_model(message)
-        elif "glm" in self.online_model_name:
-            output = self.infer_with_glm_model(message)
         else:
             raise ValueError("Unsupported model name")
 
@@ -191,14 +186,9 @@ class LLM:
 
     def infer_with_deepseek_model(self, message):
         """
-        Infer using the DeepSeek model (V3, R1, etc.)
-        DeepSeek uses OpenAI-compatible API format
+        Infer using the DeepSeek model
         """
-        api_key = os.environ.get("DEEPSEEK_API_KEY")
-        if not api_key:
-            self.logger.print_log("DeepSeek API key not found in environment variables")
-            return ""
-            
+        api_key = os.environ.get("DEEPSEEK_API_KEY2")
         model_input = [
             {
                 "role": "system",
@@ -208,7 +198,7 @@ class LLM:
         ]
 
         def call_api():
-            client = OpenAI(api_key=api_key, base_url="https://api.deepseek.com/v1")
+            client = OpenAI(api_key=api_key, base_url="https://api.deepseek.com")
             response = client.chat.completions.create(
                 model=self.online_model_name,
                 messages=model_input,
@@ -224,52 +214,13 @@ class LLM:
                 if output:
                     return output
             except Exception as e:
-                self.logger.print_log(f"DeepSeek API error: {e}")
-            time.sleep(2)
-
-        return ""
-
-    def infer_with_claude_key(self, message):
-        """
-        Infer using the Claude model with API key
-        """
-        api_key = os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("CLAUDE_API_KEY")
-        if not api_key:
-            self.logger.print_log("Claude API key not found in environment variables")
-            return ""
-            
-        model_input = [
-            {"role": "user", "content": f"{self.systemRole}\n\n{message}"}
-        ]
-
-        def call_api():
-            client = anthropic.Anthropic(api_key=api_key)
-            response = client.messages.create(
-                model=self.online_model_name,
-                max_tokens=4096,
-                temperature=self.temperature,
-                messages=model_input
-            )
-            return response.content[0].text
-
-        tryCnt = 0
-        while tryCnt < 5:
-            tryCnt += 1
-            try:
-                output = self.run_with_timeout(call_api, timeout=300)
-                if output:
-                    return output
-            except Exception as e:
-                self.logger.print_log(f"Claude API error: {e}")
+                self.logger.print_log(f"API error: {e}")
             time.sleep(2)
 
         return ""
 
     def infer_with_claude_aws_bedrock(self, message):
         """Infer using the Claude model via AWS Bedrock"""
-        # FIXME: an issue when installing boto3. I comment this function temporarily.
-        raise NotImplementedError("AWS Bedrock is not supported")
-    
         timeout = 500
         model_input = [
             {
@@ -310,6 +261,7 @@ class LLM:
                 region_name="us-west-2",
                 config=Config(read_timeout=timeout),
             )
+
             response = (
                 client.invoke_model(
                     modelId=model_id, contentType="application/json", body=body
@@ -344,8 +296,80 @@ class LLM:
 
         return ""
 
+    def infer_with_claude_key(self, message):
+        """Infer using the Claude model via API key, with thinking mode for 3.7"""
+        api_key = os.environ.get("ANTHROPIC_API_KEY")
+        if not api_key:
+            raise EnvironmentError(
+                "Please set the ANTHROPIC_API_KEY environment variable to use Claude models."
+            )
+
+        # Prepare messages - Claude prefers user messages over assistant system messages
+        model_input = [{"role": "user", "content": f"{self.systemRole}\n\n{message}"}]
+
+        def call_api():
+            client = anthropic.Anthropic(api_key=api_key)
+
+            # Determine model and settings based on version
+            if "3.7" in self.online_model_name:
+                # Claude 3.7 with thinking mode enabled by default
+                model_name = "claude-3-7-sonnet-20250219"
+                api_params = {
+                    "model": model_name,
+                    "messages": model_input,
+                    "max_tokens": self.max_output_length,
+                    "temperature": self.temperature,
+                    "thinking": {"type": "enabled", "budget_tokens": 2048},
+                }
+            else:
+                # Claude 3.5 standard mode
+                model_name = "claude-3-5-sonnet-20241022"
+                api_params = {
+                    "model": model_name,
+                    "messages": model_input,
+                    "max_tokens": self.max_output_length,
+                    "temperature": self.temperature,
+                    # No thinking parameter for 3.5
+                }
+
+            # Make the API call
+            response = client.messages.create(**api_params)
+
+            # Extract response text based on model type
+            if (
+                "3.7" in self.online_model_name
+                and hasattr(response, "content")
+                and len(response.content) > 1
+            ):
+                # For Claude 3.7 with thinking mode, get the final response (skip thinking content)
+                return response.content[-1].text
+            else:
+                # For Claude 3.5 or any standard response
+                return response.content[0].text
+
+        tryCnt = 0
+        max_retries = 5
+        while tryCnt < max_retries:
+            tryCnt += 1
+            try:
+                output = self.run_with_timeout(call_api, timeout=100)
+                if output:
+                    self.logger.print_log(
+                        f"Claude API call successful with {self.online_model_name}"
+                    )
+                    return output
+            except Exception as e:
+                self.logger.print_log(
+                    f"Claude API error (attempt {tryCnt}/{max_retries}): {e}"
+                )
+                if tryCnt == max_retries:
+                    self.logger.print_log("Max retries reached for Claude API")
+            time.sleep(2)
+        return ""
+
     def infer_with_glm_model(self, message):
         """Infer using the GLM model"""
+        from zhipuai import ZhipuAI
         api_key = os.environ.get("GLM_API_KEY")
         model_input = [
             {"role": "system", "content": self.systemRole},

@@ -32,8 +32,3 @@ TBD: provide interfaces for RepoAudit
 
 ## Swarm Auditors
 
-## Tool  Use
-
-- Retrival: grep, diff, ctags, clangd, ...
-- Linter: pylint, ....
-
